@@ -1,6 +1,6 @@
 use std::io::{Read, Write};
 use std::process::exit;
-use std::thread;
+use std::str;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -43,7 +43,7 @@ fn main() {
 
     info!("Getting serial port");
     let mut serialport = serialport::new("/dev/ttyS0", 9600)
-        .timeout(Duration::from_millis(100))
+        .timeout(Duration::from_millis(1000))
         .open()
         .expect("Failed to open serialport");
     serialport.write_all(&CONFIG_REGISTER).expect("Couldn't configure LoRa Hat");
@@ -56,19 +56,39 @@ fn main() {
     m1_pin.set_low();
     sleep(Duration::from_secs(1));
 
-    debug!("Spawning thread");
-    thread::spawn(move || {
-        loop {
-            debug!("Doing request");
-            match reqwest::blocking::get(&push_url) {
-                Ok(res) => {
-                    if res.status() != 200 {
-                        error!("Got unexpected status {} from request", res.status())
+    // debug!("Spawning thread");
+    // thread::spawn(move || {
+    //     loop {
+    //         debug!("Doing request");
+    //         match reqwest::blocking::get(&push_url) {
+    //             Ok(res) => {
+    //                 if res.status() != 200 {
+    //                     error!("Got unexpected status {} from request", res.status())
+    //                 }
+    //             }
+    //             Err(err) => error!("Could not make request: {}", err)
+    //         };
+    //         sleep(Duration::from_secs(30));
+    //     }
+    // });
+    loop {
+        let mut serial_buf: [u8; 64] = [0; 64];
+        match serialport.read(&mut serial_buf) {
+            Ok(bytes) => {
+                match str::from_utf8(&serial_buf[0..bytes]) {
+                    Ok(message) => {
+                        info!("Got message from LoRa: {}", message)
+                    }
+                    Err(error) => {
+                        error!("Couldn't convert to UTF-8 String: {:?}, error: {}", &serial_buf[0..bytes], error.to_string())
                     }
                 }
-                Err(err) => error!("Could not make request: {}", err)
-            };
-            sleep(Duration::from_secs(30));
+            }
+            Err(error) => {
+                if !error.to_string().contains("Operation timed out") {
+                    error!("Got IO Error reading from serial port: {}", error.to_string())
+                }
+            }
         }
-    });
+    }
 }
